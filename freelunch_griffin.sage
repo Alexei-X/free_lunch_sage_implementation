@@ -153,14 +153,9 @@ def griffin_round(state, rnd_idx, u_new):
 # ---------------------------------------------------------------------------
 # Step 1 – sysGen: build the FreeLunch polynomial system
 # ---------------------------------------------------------------------------
-# Griffin-pi (Definition 11):  G^pi = F_R ∘ ... ∘ F_1(M × ·)
-# The initial affine layer M×· is applied to the raw input BEFORE round 1.
+# The initial affine layer M×. is applied to the raw input before round 1.
 #
 # CICO problem: find raw_input with raw_input[0] = 0 and output[0] = 0.
-# We set raw_input = (0, x0, 0, ..., 0) — branch 1 is the single free
-# unknown, all others fixed to 0 (branch 0 must be 0 for CICO).
-# Then z0 = M × raw_input is a vector of affine polynomials in x0,
-# which becomes the initial state for the first round's NL layer.
 
 def build_initial_state():
     """
@@ -174,7 +169,7 @@ def build_initial_state():
     raw = [PR(0), 31*x0+3, 3*x0, x0+1, 7*x0+43, 2*x0+1, 4*x0+2, 6*x0+12, 9*x0+36, 3*x0+3, 4*x0+7, 2*x0+10]
     print(f"Input as a x0 state = {raw}")
     raw_vec = vector(PR, raw)
-    z0 = list(M_mat * raw_vec)   # affine polynomials in x0
+    z0 = list(M_mat * raw_vec)
     #print(f"z0 = {z0}")
     return z0
 
@@ -236,7 +231,7 @@ def make_freelunch_ring(n_rounds):
     SageMath supports weighted degree lex orders via
       TermOrder('wdeglex', weights)
     which orders monomials first by weighted degree then lexicographically
-    (with the LAST variable being largest in lex — we reverse var order so
+    (with the LAST variable being largest in lex, we reverse var order so
     x0 < u1 < ... < u_R in the lex tiebreak, matching the paper).
     """
     weights = freelunch_weights(n_rounds)
@@ -285,15 +280,13 @@ def mat_gen(system_fl, PR_fl, n_rounds):
     x0_fl = PR_fl.gen(0)
 
     # --- Normal basis --------------------------------------------------
-    # We need the standard monomials (basis of R/I) w.r.t. the FreeLunch
-    # order.  SageMath's ideal.normal_basis() calls Singular, which uses
-    # the ring's term order — so as long as PR_fl carries the wdeglex order
-    # this is correct.
+    # We need the standard monomials (basis of R/I) w.r.t. the FreeLunch order.
     I_fl  = PR_fl.ideal(system_fl)
     B_all = I_fl.normal_basis()   # monomials not in LT(I) under FreeLunch order
 
     # H-basis: monomials with x0-exponent == 0
     B_H = [m for m in B_all if m.degree(x0_fl) == 0]
+    print("B_H : ", B_H)
 
     DH     = len(B_H)
     DI     = len(B_all)
@@ -303,11 +296,9 @@ def mat_gen(system_fl, PR_fl, n_rounds):
 
     B_H_idx = {m: j for j, m in enumerate(B_H)}
 
-    # Verify system_fl is the GB (it should be by construction)
     GB = system_fl   # FreeLunch system is already a GB in its order
 
     # --- Build M_i blocks ----------------------------------------------
-    # Lemma 1: T0 has block-companion form with blocks M_0..M_{alpha0-1}.
     # From the reduction:
     #   x0^{alpha0} * phi_j  ≡  rem  (mod I)
     # where rem = sum_{k,l} c_{k,l} * x0^k * B_H[l],
@@ -328,13 +319,6 @@ def mat_gen(system_fl, PR_fl, n_rounds):
                 l = B_H_idx[base]
                 Mi_list[k_exp][l, j] = -Fp(coef)
 
-    # Sanity: warn if all blocks are zero (means reduce() silently did nothing)
-    nonzero_blocks = sum(1 for M in Mi_list if not M.is_zero())
-    print(f"  Non-zero M_i blocks: {nonzero_blocks} / {alpha0}")
-    if nonzero_blocks == 0:
-        print("  WARNING: all M_i are zero. .reduce() likely ignored the term order.")
-        print("  Ensure system_fl polynomials live in PR_fl (the wdeglex ring).")
-
     return alpha0, DH, Mi_list, B_H
 
 
@@ -342,9 +326,7 @@ def mat_gen(system_fl, PR_fl, n_rounds):
 # Step 3 – polyDet: compute det via Lemma 2
 # ---------------------------------------------------------------------------
 # Lemma 2:
-#   det(x0 * I_{DI} - T0) = ± det( x0^{alpha0} * I_{DH}
-#                                   + sum_{i=0}^{alpha0-1} x0^i * M_i )
-#
+#   det(x0 * I_{DI} - T0) = ± det( x0^{alpha0} * I_{DH} + sum_{i=0}^{alpha0-1} x0^i * M_i )
 # The right-hand side is the determinant of a DH×DH matrix whose entries
 # are polynomials in x0 of degree <= alpha0.  We evaluate it at sufficiently
 # many points and interpolate (or use a symbolic DH×DH determinant).
@@ -363,9 +345,6 @@ def poly_det(alpha0, DH, Mi_list):
 
     deg_f = DH * alpha0    # degree of f(x0)
     n_pts = deg_f + 1
-
-    if n_pts > p:
-        raise ValueError("Field too small for interpolation; use a larger prime.")
 
     eval_pts  = [Fp(i) for i in range(n_pts)]
     eval_vals = []
@@ -393,7 +372,7 @@ def uni_sol(f):
 
 
 # ---------------------------------------------------------------------------
-# Verification helper
+# Verification
 # ---------------------------------------------------------------------------
 
 def griffin_eval(input_vec, n_rounds):
@@ -402,7 +381,7 @@ def griffin_eval(input_vec, n_rounds):
     Returns the output vector.
     """
     # Initial affine layer: state = M * input  (Griffin applies M before round 1)
-    # Actually Griffin-pi is:  G^pi = F_R o ... o F_1 o (M * .)
+    # Actually Griffin-pi is:  G^pi = F_R \odot ... \odot F_1 \odot (M * .)
     # where F_i(s) = c^{(i)} + M * S(s)
     state = list(M_mat * vector(Fp, input_vec))
 
@@ -431,7 +410,7 @@ def verify_cico(x0_val, n_rounds):
     Check that raw_input is a CICO solution.
     """
     #inp = [Fp(0), Fp(x0_val)] + [Fp(0)] * (t - 2)
-    inp = [Fp(0), Fp(31*x0_val+3), Fp(3*x0_val), Fp(x0_val+1), Fp(7*x0_val+43), Fp(2*x0_val+1), Fp(4*x0_val+2), 
+    inp = [Fp(0), Fp(31*x0_val+3), Fp(3*x0_val), Fp(x0_val+1), Fp(7*x0_val+43), Fp(2*x0_val+1), Fp(4*x0_val+2),
         Fp(6*x0_val+12), Fp(9*x0_val+36), Fp(3*x0_val+3), Fp(4*x0_val+7), Fp(2*x0_val+10)]
     out = griffin_eval(inp, n_rounds)
     return out[0] == Fp(0), out
@@ -460,8 +439,7 @@ def freelunch_attack(n_rounds):
     print("\n  Re-expressing in FreeLunch weighted deglex ring...")
     PR_fl = make_freelunch_ring(n_rounds)
 
-    # Use a ring homomorphism PR -> PR_fl (same variables, same Fp, new order).
-    # hom() is the safest way: avoids string-parsing surprises.
+    # Use a ring homomorphism PR -> PR_fl (same variables, same Fp with a new order).
     # PR has n_rounds+1 active vars (x0, u1..u_{n_rounds}) but was built with
     # R vars total.  PR_fl has exactly n_rounds+1 vars.  Map them by position.
     phi = PR.hom([PR_fl.gen(i) for i in range(n_rounds + 1)]
@@ -504,7 +482,7 @@ def freelunch_attack(n_rounds):
     for rv in roots:
         ok, out = verify_cico(rv, n_rounds)
         #inp = [Fp(0)] + [Fp(rv)] + [Fp(0)] * (t - 2)
-        inp = [Fp(0), Fp(31*rv+3), Fp(3*rv), Fp(rv+1), Fp(7*rv+43), Fp(2*rv+1), Fp(4*rv+2), 
+        inp = [Fp(0), Fp(31*rv+3), Fp(3*rv), Fp(rv+1), Fp(7*rv+43), Fp(2*rv+1), Fp(4*rv+2),
             Fp(6*rv+12), Fp(9*rv+36), Fp(3*rv+3), Fp(4*rv+7), Fp(2*rv+10)]
         print(f"  x0 = {rv}")
         print(f"  input[0]  = {inp[0]},  output[0] = {out[0]},  CICO OK: {ok}")
