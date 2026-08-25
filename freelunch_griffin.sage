@@ -4,23 +4,22 @@ FreeLunch algebraic attack on Griffin-pi (SageMath implementation).
 Reference: "The Algebraic FreeLunch: Efficient Gröbner Basis Attacks Against
 Arithmetization-Oriented Primitives"
 
-Attack overview (Algorithm 1):
-  1. sysGen  – build the FreeLunch polynomial system P_G
-  2. matGen  – compute the multiplication matrix T0 from the FreeLunch basis
-  3. polyDet – compute det(x0^alpha0 * I_DH + sum_{i=0}^{alpha0-1} x0^i * M_i)
-  4. uniSol  – find roots of the resulting univariate polynomial
+Attack overview:
+  1. sysGen  : build the FreeLunch polynomial system P_G
+  2. matGen  : compute the multiplication matrix T0 from the FreeLunch basis
+  3. polyDet : compute det(x0^alpha0 * I_DH + sum_{i=0}^{alpha0-1} x0^i * M_i)
+  4. uniSol  : find roots of the resulting univariate polynomial
 """
 
 import sys
 from sage.all import *
+import time
 
-# ---------------------------------------------------------------------------
 # Griffin parameters
-# ---------------------------------------------------------------------------
-p      = 28407454060060787          # 55-bit prime
-R      = 12                          # number of rounds to attack by default
-t      = 12                         # number of branches
-alpha  = 3                          # smallest integer with gcd(alpha, p-1)=1
+p        = 28407454060060787          # 55-bit prime
+n_rounds = 4                          # number of rounds to attack by default
+t        = 12                         # number of branches
+alpha    = 3                          # smallest integer with gcd(alpha, p-1)=1
 
 Fp     = GF(p)
 
@@ -48,29 +47,27 @@ M_mat = matrix(Fp, M_rows)
 # Round constants
 set_random_seed(int.from_bytes(b"Griffin", "little"))
 RC = []
-for _ in range(R - 1):
+for _ in range(n_rounds - 1):
     RC.append(vector(Fp, [Fp.random_element() for _ in range(t)]))
 RC.append(vector(Fp, [Fp(0)] * t))   # last round constant is 0
 
-# ---------------------------------------------------------------------------
-# Polynomial ring
-# ---------------------------------------------------------------------------
-# Variables: x0 (the unknown input), u1..u_{R} (auxiliary variables, one per round for the 1/alpha branch).
-var_names = ["x0"] + [f"u{i}" for i in range(1, R + 1)]
-PR = PolynomialRing(Fp, var_names, order="degrevlex")
-gens = PR.gens()
+d = 2 * alpha + 1          # degree per round for Griffin
+weights = [1]              # for x0
+for i in range(1, n_rounds + 1):
+    weights.append(d**(i - 1))   # = alpha * wt(u_i), integer
+to = TermOrder('wdeglex', tuple(weights))
+names = ["x0"] + [f"u{i}" for i in range(1, n_rounds + 1)]
+PR_fl = PolynomialRing(Fp, names, order=to)
+gens = PR_fl.gens()
 x0 = gens[0]
 U  = list(gens[1:])
 
-
-# ---------------------------------------------------------------------------
 # Griffin non-linear layer
-# ---------------------------------------------------------------------------
 def L_i(y0, y1, y_prev, i):
     return Fp(i - 1) * y0 + y1 + y_prev
 
 
-def griffin_nl(state, u_new):
+def griffin_nl(state, u_new, system):
     """
     Apply Griffin non-linear layer.
 
@@ -83,7 +80,7 @@ def griffin_nl(state, u_new):
     * p_eq      : polynomial equation  u_new^alpha - state[0]
     """
     # Equation for the 1/alpha branch: u_new^alpha = state[0]
-    p_eq = u_new**alpha - state[0]
+    p_eq = u_new**alpha - state[0].reduce(system)
 
     y0 = u_new
     y1 = state[1]**alpha   # y1 = state[1]^alpha  (alpha branch)
@@ -91,7 +88,7 @@ def griffin_nl(state, u_new):
     new_state = [y0, y1]
     for i in range(2, t):
         li = L_i(y0, y1, state[i - 1], i)
-        y_i = state[i] * (li**2 + deltas[i] * li + mus[i])
+        y_i = (state[i] * (li**2 + deltas[i] * li + mus[i])).reduce(system)
         new_state.append(y_i)
 
     return new_state, p_eq
@@ -106,13 +103,13 @@ def griffin_affine(state, rnd_idx):
     Returns
     * new_state : list of t polynomials
     """
-    sv = vector(PR, state)
-    rc = vector(PR, [PR(c) for c in RC[rnd_idx]])
+    sv = vector(PR_fl, state)
+    rc = vector(PR_fl, [PR_fl(c) for c in RC[rnd_idx]])
     result = M_mat * sv + rc
     return list(result)
 
 
-def griffin_round(state, rnd_idx, u_new):
+def griffin_round(state, rnd_idx, u_new, system):
     """
     One full Griffin round: NL layer then affine layer.
 
@@ -125,29 +122,27 @@ def griffin_round(state, rnd_idx, u_new):
     * new_state : list of t polynomials
     * p_eq      : equation u_new^alpha - (input to 1/alpha branch)
     """
-    state_nl, p_eq = griffin_nl(state, u_new)
+    state_nl, p_eq = griffin_nl(state, u_new, system)
     new_state = griffin_affine(state_nl, rnd_idx)
     return new_state, p_eq
 
 
-# ---------------------------------------------------------------------------
-# Step 1 – sysGen: build the FreeLunch polynomial system
-# ---------------------------------------------------------------------------
+# Step 1: sysGen: build the FreeLunch polynomial system
 # CICO problem: find raw_input with raw_input[0] = 0 and output[0] = 0.
 
 def build_initial_state():
     """
     Returns a list of t affine polynomials in x0 (the state after the initial linear layer, before round 1).
     """
-    raw = [PR(0), 31*x0+3, 3*x0, x0+1, 7*x0+43, 2*x0+1, 4*x0+2, 6*x0+12, 9*x0+36, 3*x0+3, 4*x0+7, 2*x0+10]
+    raw = [PR_fl(0), 31*x0+3, 3*x0, x0+1, 7*x0+43, 2*x0+1, 4*x0+2, 6*x0+12, 9*x0+36, 3*x0+3, 4*x0+7, 2*x0+10]
     print(f"Input as a x0 state = {raw}")
-    raw_vec = vector(PR, raw)
+    raw_vec = vector(PR_fl, raw)
     z0 = list(M_mat * raw_vec)
     #print(f"z0 = {z0}")
     return z0
 
 
-def sys_gen(n_rounds):
+def sys_gen(n_rounds, PR_fl):
     """
     Generate the FreeLunch polynomial system for Griffin with n_rounds rounds.
 
@@ -160,61 +155,14 @@ def sys_gen(n_rounds):
     system = []
     for rnd in range(n_rounds):
         u_new = U[rnd]
-        state, p_eq = griffin_round(state, rnd, u_new)
+        state, p_eq = griffin_round(state, rnd, u_new, system)
         system.append(p_eq)
     # g = first component of the final state (CICO requires this = 0)
-    system.append(state[0])
+    system.append(state[0].reduce(system))
     return system
 
 
-# ---------------------------------------------------------------------------
-# FreeLunch order
-# ---------------------------------------------------------------------------
-# The FreeLunch order is a weighted deglex order with weights:
-#   wt(x0) = 1
-#   wt(u_i) = wt(LM_{<_T}(q_i)) / alpha_i
-#
-# For Griffin the naive encoding gives every auxiliary variable the role of
-# capturing x^{1/alpha}, so alpha_i = alpha for all i, and the weight
-# of q_i (the argument to x^{1/alpha} in round i) grows as (2*alpha+1)^{i-1}.
-# Hence:
-#   wt(u_i) = (2*alpha+1)^{i-1} / alpha
-#
-# We encode this as integer weights (scaled by alpha^R to stay integral).
-
-def freelunch_weights(n_rounds):
-    """
-    Return integer weight vector [wt(x0), wt(u1), ..., wt(u_{n_rounds})]
-    for the FreeLunch order.
-    """
-    # d_{<=i} = (2*alpha+1)^i   (degree of G_i composed)
-    d = 2 * alpha + 1          # degree per round for Griffin
-    # wt(x0) = 1  (scaled)
-    # wt(u_i) = d^{i-1} / alpha  =>  multiply through by alpha
-    weights = [1]              # for x0
-    for i in range(1, n_rounds + 1):
-        weights.append(d**(i - 1))   # = alpha * wt(u_i), integer
-    return weights
-
-
-def make_freelunch_ring(n_rounds):
-    """
-    Return a polynomial ring with the FreeLunch weighted deglex order.
-
-    SageMath supports weighted degree lex orders via
-        TermOrder('wdeglex', weights)
-    which orders monomials first by weighted degree then lexicographically
-    """
-    weights = freelunch_weights(n_rounds)
-    # SageMath wdeglex uses the weight vector directly.
-    to = TermOrder('wdeglex', tuple(weights))
-    names = ["x0"] + [f"u{i}" for i in range(1, n_rounds + 1)]
-    return PolynomialRing(Fp, names, order=to)
-
-
-# ---------------------------------------------------------------------------
-# Step 2 – matGen: compute the multiplication matrix T0
-# ---------------------------------------------------------------------------
+# Step 2 : matGen: compute the multiplication matrix T0
 # We compute the M_i blocks by reducing x0^{alpha0} * phi_j modulo the ideal and reading off the coefficients.
 def mat_gen(system_fl, PR_fl, n_rounds):
     """
@@ -233,7 +181,7 @@ def mat_gen(system_fl, PR_fl, n_rounds):
     """
     x0_fl = PR_fl.gen(0)
 
-    # --- Normal basis --------------------------------------------------
+    # Normal basis
     # We need the standard monomials (basis of R/I) w.r.t. the FreeLunch order.
     I_fl  = PR_fl.ideal(system_fl)
     B_all = I_fl.normal_basis()   # monomials not in LT(I) under FreeLunch order
@@ -246,13 +194,14 @@ def mat_gen(system_fl, PR_fl, n_rounds):
     DI     = len(B_all)
     alpha0 = DI // DH      # degree of x0 in LM(g)
 
-    print(f"  DI = {DI},  DH = {DH},  alpha0 = {alpha0}")
+    print(f"DI = {DI}, DH = {DH}, alpha0 = {alpha0}")
 
     B_H_idx = {m: j for j, m in enumerate(B_H)}
+    print("B_H_idx : ", B_H_idx)
 
     GB = system_fl   # FreeLunch system is already a GB in its order
 
-    # --- Build M_i blocks ----------------------------------------------
+    # Build M_i blocks
     # From the reduction: x0^{alpha0} * phi_j \equiv rem (mod I)
     # where rem = sum_{k,l} c_{k,l} * x0^k * B_H[l],
     # and by Lemma 1:  rem = -sum_k sum_l M_k[l,j] * x0^k * B_H[l]
@@ -274,42 +223,46 @@ def mat_gen(system_fl, PR_fl, n_rounds):
     return alpha0, DH, Mi_list, B_H
 
 
-# ---------------------------------------------------------------------------
-# Step 3 – polyDet: compute det via Lemma 2
-# ---------------------------------------------------------------------------
+# Step 3: polyDet: compute det via Lemma 2
 def poly_det(alpha0, DH, Mi_list):
     """
-    Compute the univariate polynomial
-        f(x0) = det( x0^alpha0 * I_DH + sum_{i=0}^{alpha0-1} x0^i * M_i )
-    by evaluating at DH*alpha0 + 1 points and interpolating.
-
-    Returns
-    * f : polynomial in Fp[x0]  of degree  DH * alpha0
+    Compute the determinant using the Bareiss algorithm (fraction-free Gaussian elimination)
+    directly on the matrix with polynomial entries.
     """
     Fx = PolynomialRing(Fp, 'x')
-    xv = Fx.gen()
+    x = Fx.gen()
 
-    deg_f = DH * alpha0    # degree of f(x0)
-    n_pts = deg_f + 1
+    # Construct the Matrix with Polynomial Entries
+    # A(x) = x^alpha0 * I + sum(x^i * Mi)
+    print("  Constructing polynomial matrix...")
+    A = matrix(Fx, DH, DH)
 
-    eval_pts  = [Fp(i) for i in range(n_pts)]
-    eval_vals = []
+    # Set diagonal: x^alpha0
+    x_alpha0 = x**alpha0
+    for i in range(DH):
+        A[i, i] = x_alpha0
 
-    for pt in eval_pts:
-        # Build the DH x DH matrix at x0 = pt
-        A = pt**alpha0 * identity_matrix(Fp, DH)
-        for i in range(alpha0):
-            A = A + pt**i * Mi_list[i]
-        eval_vals.append(A.determinant())
+    # Add Mi blocks
+    for i in range(alpha0):
+        coeff = x**i
+        Mi = Mi_list[i]
+        for r in range(DH):
+            for c in range(DH):
+                val = Mi[r, c]
+                if val != 0:
+                    A[r, c] += coeff * val
 
-    f = Fx.lagrange_polynomial(list(zip(eval_pts, eval_vals)))
+    start_time = time.time()
+    # Compute Determinant using Bareiss Algorithm
+    f = A.det()
+
+    end_time = time.time()
+    print(f"  Determinant computed in {end_time - start_time:.2f} seconds.")
+    print(f"  Resulting polynomial degree: {f.degree()}")
     return f
 
 
-# ---------------------------------------------------------------------------
-# Step 4 – uniSol: find roots of f(x0)
-# ---------------------------------------------------------------------------
-
+# Step 4: uniSol: find roots of f(x0)
 def uni_sol(f):
     """
     Return all roots of the univariate polynomial f over Fp.
@@ -317,17 +270,12 @@ def uni_sol(f):
     return [r for r, _ in f.roots()]
 
 
-# ---------------------------------------------------------------------------
 # Verification
-# ---------------------------------------------------------------------------
-
 def griffin_eval(input_vec, n_rounds):
     """
     Evaluate Griffin-pi numerically on input_vec (list of Fp elements).
     Returns the output vector.
     """
-    # Griffin-pi:  G^pi = F_R \odot ... \odot F_1 \odot (M * .)
-    # where F_i(s) = c^{(i)} + M * S(s)
     state = list(M_mat * vector(Fp, input_vec))
 
     for rnd in range(n_rounds):
@@ -359,36 +307,24 @@ def verify_cico(x0_val, n_rounds):
     return out[0] == Fp(0), out
 
 
-# ---------------------------------------------------------------------------
 # Main attack
-# ---------------------------------------------------------------------------
-
 def freelunch_attack(n_rounds):
+    start_time = time.time()
     print("=" * 60)
     print(f"FreeLunch attack on Griffin-pi")
     print(f"  p={p}, t={t}, alpha={alpha}, R={n_rounds}")
     print("=" * 60)
 
-    # --- Step 1: sysGen ---
+    # Step 1: sysGen
     print("\n[1/4] sysGen: building FreeLunch polynomial system...")
-    system = sys_gen(n_rounds)
-    print(f"  Generated {len(system)} polynomials in {PR.ngens()} variables.")
+    system = sys_gen(n_rounds, PR_fl)
+    print(f"  Generated {len(system)} polynomials in {PR_fl.ngens()} variables.")
     print(f"  Equations:")
     for i, eq in enumerate(system):
         lm = eq.lm()
         print(f"    p[{i}]: LM = {lm},  #terms = {len(eq.monomials())}")
 
-    # Rewrite system in the FreeLunch ring with weighted order
-    print("\n  Re-expressing in FreeLunch weighted deglex ring...")
-    PR_fl = make_freelunch_ring(n_rounds)
-
-    # Use a ring homomorphism PR -> PR_fl (same variables, same Fp with a new order).
-    # PR has n_rounds+1 active vars (x0, u1..u_{n_rounds}) but was built with
-    # R vars total.  PR_fl has exactly n_rounds+1 vars.  Map them by position.
-    phi = PR.hom([PR_fl.gen(i) for i in range(n_rounds + 1)]
-                 + [PR_fl(0)] * (PR.ngens() - (n_rounds + 1)),
-                 PR_fl)
-    system_fl = [phi(eq) for eq in system]
+    system_fl = system
     print("  FreeLunch ring order:", PR_fl.term_order())
     print("  Leading monomials in FreeLunch order:")
     for i, eq in enumerate(system_fl):
@@ -400,26 +336,28 @@ def freelunch_attack(n_rounds):
     is_fl = all(sum(1 for e in lm.exponents()[0] if e > 0) == 1 for lm in lms)
     print(f"  Is FreeLunch system: {is_fl}")
     if not is_fl:
-        print("  WARNING: Not a FreeLunch system — check encoding!")
+        print("  WARNING: Not a FreeLunch system => check encoding!")
 
-    # --- Step 2: matGen ---
+    # Step 2: matGen
     print("\n[2/4] matGen: computing multiplication matrix T0...")
     alpha0, DH, Mi_list, B_H = mat_gen(system_fl, PR_fl, n_rounds)
     print(f"  alpha0 = {alpha0},  DH = {DH}")
     print(f"  M_i blocks (sizes {DH}x{DH}):  {len(Mi_list)} blocks")
 
-    # --- Step 3: polyDet ---
+    # Step 3: polyDet
     print("\n[3/4] polyDet: computing det(x0^alpha0 * I + sum x0^i * M_i)...")
     f = poly_det(alpha0, DH, Mi_list)
     print(f"  Degree of f(x0) = {f.degree()}")
     print(f"  f(x0) = {f}")
 
-    # --- Step 4: uniSol ---
+    # Step 4: uniSol
     print("\n[4/4] uniSol: finding roots of f(x0)...")
     roots = uni_sol(f)
+    end_time = time.time()
     print(f"  Found {len(roots)} root(s): {roots}")
+    print("Duration of the attack : ", end_time - start_time, "seconds")
 
-    # --- Verification ---
+    # Verification
     print("\nVerification:")
     for rv in roots:
         ok, out = verify_cico(rv, n_rounds)
@@ -435,13 +373,4 @@ def freelunch_attack(n_rounds):
 
 
 if __name__ == "__main__":
-    n_rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 2
-
-    if n_rounds > R:
-        print(f"Error: n_rounds={n_rounds} exceeds configured R={R}")
-        sys.exit(1)
-    if n_rounds > len(U):
-        print(f"Error: not enough auxiliary variables for {n_rounds} rounds.")
-        sys.exit(1)
-
     roots = freelunch_attack(n_rounds)
