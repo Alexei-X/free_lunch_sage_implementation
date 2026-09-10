@@ -243,6 +243,7 @@ def poly_det(alpha0, DH, Mi_list):
         A[i, i] = x_alpha0
 
     # Add Mi blocks
+    # Idea for optimization : use previous coeff to compute power + use blocks of coefficients
     for i in range(alpha0):
         coeff = x**i
         Mi = Mi_list[i]
