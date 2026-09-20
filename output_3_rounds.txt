@@ -41,3 +41,57 @@ Verification:
   input[0]  = 0,  output[0] = 0,  CICO OK: True
 Input state = [0, 9883093760726572, 23865665573667722, 26893524564596433, 17809947591810345, 25379595069132078, 22351736078203369, 19323877087274669, 14782088600881628, 23865665573667725, 22351736078203374, 25379595069132087]
 Output state = [0, 7348190194790517, 9840570552913083, 10500904102547897, 17321557974666609, 947092827590594, 21930088944804899, 1383661093092770, 11551864458130450, 3617950879646614, 26517784390904568, 10213406481201573]
+┌────────────────────────────────────────────────────────────────────┐
+│ SageMath version 10.9, Release Date: 2026-05-04                    │
+│ Using Python 3.14.7. Type "help()" for help.                       │
+└────────────────────────────────────────────────────────────────────┘
+sage: ============================================================
+FreeLunch attack on Griffin-pi
+  p=28407454060060787, t=12, alpha=3, R=3
+============================================================
+
+[1/4] sysGen: building FreeLunch polynomial system...
+Input as a x0 state = [0, 13*x0 + 3, x0, x0 + 1, 7*x0 + 43, 2*x0 + 1, 4*x0 + 24, 6*x0 + 12, 9*x0 + 36, 3*x0 + 3, 4*x0 + 7, 2*x0 + 10]
+---------------------------------------------------------------------------
+KeyboardInterrupt                         Traceback (most recent call last)
+File ~/ULB/Thesis/free_lunch_sage_implementation/freelunch_griffin.sage:379
+    375     return roots
+    378 if __name__ == "__main__":
+--> 379     roots = freelunch_attack(n_rounds)
+
+File ~/ULB/Thesis/free_lunch_sage_implementation/freelunch_griffin.sage:323, in freelunch_attack(n_rounds)
+    321 # Step 1: sysGen
+    322 print("\n[1/4] sysGen: building FreeLunch polynomial system...")
+--> 323 system = sys_gen(n_rounds, PR_fl)
+    324 print(f"  Generated {len(system)} polynomials in {PR_fl.ngens()} variables.")
+    325 print(f"  Equations:")
+
+File ~/ULB/Thesis/free_lunch_sage_implementation/freelunch_griffin.sage:159, in sys_gen(n_rounds, PR_fl)
+    157 for rnd in range(n_rounds):
+    158     u_new = U[rnd]
+--> 159     state, p_eq = griffin_round(state, rnd, u_new, system)
+    160     system.append(p_eq)
+    161 # g = first component of the final state (CICO requires this = 0)
+
+File ~/ULB/Thesis/free_lunch_sage_implementation/freelunch_griffin.sage:126, in griffin_round(state, rnd_idx, u_new, system)
+    113 def griffin_round(state, rnd_idx, u_new, system):
+    114     """
+    115     One full Griffin round: NL layer then affine layer.
+    116 
+   (...)    124     * p_eq      : equation u_new^alpha - (input to 1/alpha branch)
+    125     """
+--> 126     state_nl, p_eq = griffin_nl(state, u_new, system)
+    127     new_state = griffin_affine(state_nl, rnd_idx)
+    128     return new_state, p_eq
+
+File ~/ULB/Thesis/free_lunch_sage_implementation/freelunch_griffin.sage:92, in griffin_nl(state, u_new, system)
+     90 for i in range(2, t):
+     91     li = L_i(y0, y1, state[i - 1], i)
+---> 92     y_i = (state[i] * (li**2 + deltas[i] * li + mus[i])).reduce(system)
+     93     new_state.append(y_i)
+     95 return new_state, p_eq
+
+File cysignals/signals.pyx:357, in cysignals.signals.python_check_interrupt()
+--> 357 'Could not get source, probably due dynamically evaluated source code.'
+KeyboardInterrupt: 
+sage: 

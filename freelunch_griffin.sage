@@ -14,6 +14,7 @@ Attack overview:
 import sys
 from sage.all import *
 import time
+import numpy as np
 
 # Griffin parameters
 p        = 28407454060060787          # 55-bit prime
@@ -88,7 +89,8 @@ def griffin_nl(state, u_new, system):
     new_state = [y0, y1]
     for i in range(2, t):
         li = L_i(y0, y1, state[i - 1], i)
-        y_i = (state[i] * (li**2 + deltas[i] * li + mus[i])).reduce(system)
+        #y_i = (state[i].reduce(system) * (li**2 + deltas[i] * li + mus[i]).reduce(system))
+        y_i = (state[i].reduce(system) * (li**2 + deltas[i] * li + mus[i]).reduce(system)).reduce(system)
         new_state.append(y_i)
 
     return new_state, p_eq
@@ -134,7 +136,8 @@ def build_initial_state():
     """
     Returns a list of t affine polynomials in x0 (the state after the initial linear layer, before round 1).
     """
-    raw = [PR_fl(0), 31*x0+3, 3*x0, x0+1, 7*x0+43, 2*x0+1, 4*x0+2, 6*x0+12, 9*x0+36, 3*x0+3, 4*x0+7, 2*x0+10]
+    #raw = [PR_fl(0), 2*x0+3, 3*x0, 2*x0+2, 2*x0+4, x0+1, 4*x0+24, x0+12, x0+30, 2*x0+3, 3*x0+7, x0+8]
+    raw = [PR_fl(0), 31*x0 + 3, 3*x0, x0 + 1, 7*x0 + 43, 2*x0 + 1, 4*x0 + 2, 6*x0 + 12, 9*x0 + 36, 3*x0 + 3, 4*x0 + 7, 2*x0 + 10]
     print(f"Input as a x0 state = {raw}")
     raw_vec = vector(PR_fl, raw)
     z0 = list(M_mat * raw_vec)
@@ -157,6 +160,7 @@ def sys_gen(n_rounds, PR_fl):
         u_new = U[rnd]
         state, p_eq = griffin_round(state, rnd, u_new, system)
         system.append(p_eq)
+        print("New equation nbr ", len(system))
     # g = first component of the final state (CICO requires this = 0)
     system.append(state[0].reduce(system))
     return system
@@ -244,17 +248,18 @@ def poly_det(alpha0, DH, Mi_list):
 
     # Add Mi blocks
     # Idea for optimization : use previous coeff to compute power + use blocks of coefficients
+    coeff = 1
     for i in range(alpha0):
-        coeff = x**i
         Mi = Mi_list[i]
+        #A += coeff * Mi
         for r in range(DH):
             for c in range(DH):
                 val = Mi[r, c]
                 if val != 0:
                     A[r, c] += coeff * val
+        coeff *= x
 
     start_time = time.time()
-    # Compute Determinant using Bareiss Algorithm
     f = A.det()
 
     end_time = time.time()
