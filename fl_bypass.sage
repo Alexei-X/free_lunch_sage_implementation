@@ -23,8 +23,9 @@ n_rounds = 4                          # number of rounds to attack by default
 t        = 12                         # number of branches
 alpha    = 3                          # smallest integer with gcd(alpha, p-1)=1
 inv_a  = pow(alpha, -1, p - 1)
+print("inv_a : ", inv_a)
 
-Fp     = GF(p)
+Fp     = FiniteField(p)
 
 # Quadratic-function parameters for the non-linear layer
 deltas = [0, 0] + [Fp(4 * (i + 1)) for i in range(t-2)]
@@ -54,6 +55,11 @@ RC = []
 for _ in range(n_rounds - 1):
     RC.append(vector(Fp, [Fp.random_element() for _ in range(t)]))
 RC.append(vector(Fp, [Fp(0)] * t))   # last round constant is 0
+print('print round constants')
+for r in range(n_rounds):
+    for i in range(t):
+        print(RC[r][i])
+    print()
 
 d = 2 * alpha + 1          # degree per round for Griffin
 weights = [1]              # for x0
@@ -76,7 +82,7 @@ M_mat_x = matrix(X_ring, M_mat)
 
 # Griffin non-linear layer
 def L_i(z0, z1, z2, i):
-    return Fp(i - 1) * z0 + z1 + z2 if i > 2 else 0
+    return Fp(i - 1) * z0 + z1 + (z2 if i > 2 else 0)
 
 def griffin_nl(state, zero=False, leading_term=False):
     """
@@ -88,15 +94,13 @@ def griffin_nl(state, zero=False, leading_term=False):
     Returns
     * nl : output of NL layer
     """
-    y0_val = 0
-    y1_val = 0
+    nl = [0, 0]
     if not zero:
         print("state[0] : ", state[0])
-        y0_val = state[0]**inv_a
-        y1_val = state[1]**alpha
-    nl = [Fp(y0_val), Fp(y1_val)]
+        nl = [Fp(state[0])**inv_a, state[1]**alpha]
+        print("state[0]**inv_a : ", Fp(state[0])**inv_a)
     for i in range(2, t):
-        li_val = L_i(y0_val, y1_val, state[i-1], i)
+        li_val = L_i(nl[0], nl[1], state[i-1], i)
         #print(f"L_{i} : ", li_val)
         if not leading_term:
             nl.append(state[i] * (li_val**2 + deltas[i] * li_val + mus[i]))
@@ -174,8 +178,8 @@ def griffin_round_with_new_var(state, rnd_idx, u_new, system):
     * new_state : list of t polynomials
     * p_eq      : equation u_new^alpha - (input to 1/alpha branch)
     """
-    state_nl, p_eq = griffin_nl_with_new_var(state, u_new, system)
-    new_state = griffin_affine_prfl(state_nl, rnd_idx)
+    state_nl, p_eq = griffin_nl_with_new_var(state, u_new, system, True)
+    new_state = griffin_affine(state_nl, rnd_idx, PR_fl)
     return new_state, p_eq
 
 
@@ -242,8 +246,9 @@ def build_initial_state(system):
     two_rounds_state = griffin_affine(two_nl_state, 1, PR_fl)
     print("two_rounds_state : ", two_rounds_state)
     three_nl_state = griffin_nl(two_rounds_state, False)
+    print("three_nl_state : ", three_nl_state)
     three_rounds_state = griffin_affine(three_nl_state, 2, PR_fl)
-    return input_state
+    return input_state, three_rounds_state
 
 def sys_gen(n_rounds, PR_fl):
     """
@@ -254,6 +259,7 @@ def sys_gen(n_rounds, PR_fl):
     """
     system = []
     state, three_rnds_state  = build_initial_state(system)
+    n_rounds -= 3
     for rnd in range(n_rounds):
         u_new = U[rnd]
         state, p_eq = griffin_round_with_new_var(state, rnd, u_new, system)
