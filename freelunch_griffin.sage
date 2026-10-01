@@ -18,7 +18,7 @@ import numpy as np
 
 # Griffin parameters
 p        = 28407454060060787          # 55-bit prime
-n_rounds = 4                          # number of rounds to attack by default
+n_rounds = 3                          # number of rounds to attack by default
 t        = 12                         # number of branches
 alpha    = 3                          # smallest integer with gcd(alpha, p-1)=1
 
@@ -136,12 +136,14 @@ def build_initial_state():
     """
     Returns a list of t affine polynomials in x0 (the state after the initial linear layer, before round 1).
     """
-    #raw = [PR_fl(0), 2*x0+3, 3*x0, 2*x0+2, 2*x0+4, x0+1, 4*x0+24, x0+12, x0+30, 2*x0+3, 3*x0+7, x0+8]
-    raw = [PR_fl(0), 31*x0 + 3, 3*x0, x0 + 1, 7*x0 + 43, 2*x0 + 1, 4*x0 + 2, 6*x0 + 12, 9*x0 + 36, 3*x0 + 3, 4*x0 + 7, 2*x0 + 10]
+    #raw = [PR_fl(0), PR_fl(0), 3*x0, PR_fl(0), 7*x0, PR_fl(0), 4*x0, PR_fl(0), 3*x0, PR_fl(0), PR_fl(0), 2*x0]
+    raw = [2*x0, PR_fl(0), 3*x0, PR_fl(0), 7*x0, PR_fl(0), 4*x0, PR_fl(0), 3*x0, PR_fl(0), PR_fl(0), PR_fl(0)]
     print(f"Input as a x0 state = {raw}")
     raw_vec = vector(PR_fl, raw)
     z0 = list(M_mat * raw_vec)
-    #print(f"z0 = {z0}")
+    print(f"z0 = {z0}")
+    print(f"z0 len : {len(z0)}")
+    print(f"raw_vec len : {len(raw_vec)}")
     return z0
 
 
@@ -306,9 +308,8 @@ def verify_cico(x0_val, n_rounds):
     """
     Check that raw_input is a CICO solution.
     """
-    #inp = [Fp(0), Fp(x0_val)] + [Fp(0)] * (t - 2)
-    inp = [Fp(0), Fp(31*x0_val+3), Fp(3*x0_val), Fp(x0_val+1), Fp(7*x0_val+43), Fp(2*x0_val+1), Fp(4*x0_val+2),
-        Fp(6*x0_val+12), Fp(9*x0_val+36), Fp(3*x0_val+3), Fp(4*x0_val+7), Fp(2*x0_val+10)]
+    inp = [Fp(2*x0_val), Fp(0), Fp(3*x0_val), Fp(0), Fp(7*x0_val), Fp(0), Fp(4*x0_val),
+        Fp(0), Fp(3*x0_val), Fp(0), Fp(0), Fp(0)]
     out = griffin_eval(inp, n_rounds)
     return out[0] == Fp(0), out
 
@@ -368,10 +369,10 @@ def freelunch_attack(n_rounds):
     for rv in roots:
         ok, out = verify_cico(rv, n_rounds)
         #inp = [Fp(0)] + [Fp(rv)] + [Fp(0)] * (t - 2)
-        inp = [Fp(0), Fp(31*rv+3), Fp(3*rv), Fp(rv+1), Fp(7*rv+43), Fp(2*rv+1), Fp(4*rv+2),
-            Fp(6*rv+12), Fp(9*rv+36), Fp(3*rv+3), Fp(4*rv+7), Fp(2*rv+10)]
+        inp = [Fp(2*rv), Fp(0), Fp(3*rv), Fp(0), Fp(7*rv), Fp(0), Fp(4*rv),
+            Fp(0), Fp(3*rv), Fp(0), Fp(0), Fp(0)]
         print(f"  x0 = {rv}")
-        print(f"  input[0]  = {inp[0]},  output[0] = {out[0]},  CICO OK: {ok}")
+        print(f"  input[t-1]  = {inp[t-1]},  output[0] = {out[0]},  CICO OK: {ok}")
         print(f"Input state = {inp}")
         print(f"Output state = {out}")
 
