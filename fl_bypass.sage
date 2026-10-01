@@ -19,7 +19,7 @@ import numpy as np
 
 # Griffin parameters
 p        = 28407454060060787          # 55-bit prime
-n_rounds = 4                          # number of rounds to attack by default
+n_rounds = 6                          # number of rounds to attack by default
 t        = 12                         # number of branches
 alpha    = 3                          # smallest integer with gcd(alpha, p-1)=1
 inv_a  = pow(alpha, -1, p - 1)
@@ -55,18 +55,11 @@ RC = []
 for _ in range(n_rounds - 1):
     RC.append(vector(Fp, [Fp.random_element() for _ in range(t)]))
 RC.append(vector(Fp, [Fp(0)] * t))   # last round constant is 0
-print('print round constants')
-for r in range(n_rounds):
-    for i in range(t):
-        print(RC[r][i])
-    print()
 
 d = 2 * alpha + 1          # degree per round for Griffin
-weights = [1]              # for x0
-for i in range(1, n_rounds + 1):
-    weights.append(d**(i - 1))   # = alpha * wt(u_i), integer
+weights = [1] + [d**(i + 1) + 1 for i in range(n_rounds - 3)] # -3 thanks to the bypassing technique
 to = TermOrder('wdeglex', tuple(weights))
-names = ["x0"] + [f"u{i}" for i in range(1, n_rounds + 1)]
+names = ["x0"] + [f"u{i}" for i in range(1, n_rounds - 3 + 1)]
 PR_fl = PolynomialRing(Fp, names, order=to)
 gens = PR_fl.gens()
 x0 = gens[0]
@@ -74,8 +67,10 @@ U  = list(gens[1:])
 
 A_ring = PolynomialRing(Fp, 'a2,a4,a6,a8,a11', order="lex")
 a2, a4, a6, a8, a11 = A_ring.gens()
+input_ais = list()
 B_ring = PolynomialRing(Fp, 'b2,b4,b6,b8,b11,u0', order="lex")
 b2, b4, b6, b8, b11, u0 = B_ring.gens()
+input_bis = list()
 X_ring = PolynomialRing(B_ring, 'x')
 x = X_ring.gen()
 M_mat_x = matrix(X_ring, M_mat)
@@ -96,9 +91,9 @@ def griffin_nl(state, zero=False, leading_term=False):
     """
     nl = [0, 0]
     if not zero:
-        print("state[0] : ", state[0])
+        #print("state[0] : ", state[0])
         nl = [Fp(state[0])**inv_a, state[1]**alpha]
-        print("state[0]**inv_a : ", Fp(state[0])**inv_a)
+        #print("state[0]**inv_a : ", Fp(state[0])**inv_a)
     for i in range(2, t):
         li_val = L_i(nl[0], nl[1], state[i-1], i)
         #print(f"L_{i} : ", li_val)
@@ -179,7 +174,9 @@ def griffin_round_with_new_var(state, rnd_idx, u_new, system):
     * p_eq      : equation u_new^alpha - (input to 1/alpha branch)
     """
     state_nl, p_eq = griffin_nl_with_new_var(state, u_new, system, True)
+    #print("NL layer state : ", state_nl)
     new_state = griffin_affine(state_nl, rnd_idx, PR_fl)
+    #print("After round state : ", new_state)
     return new_state, p_eq
 
 
@@ -188,65 +185,64 @@ def griffin_round_with_new_var(state, rnd_idx, u_new, system):
 def build_initial_state(system):
     init_a = [0, 0, a2, 0, a4, 0, a6, 0, a8, 0, 0, a11]
     input_a = M_mat_inv * vector(init_a)
-    print("input a : ", input_a)
+    #print("input a : ", input_a)
     one_nl_a = griffin_nl(init_a, True)
     one_round_a = griffin_affine(one_nl_a, None, A_ring)
-    print("One round a : ", one_round_a)
+    #print("One round a : ", one_round_a)
     two_nl_a = griffin_nl(one_round_a, True, True)
-    print("Two NL a : ", two_nl_a)
+    #print("Two NL a : ", two_nl_a)
     two_rounds_a = griffin_affine(two_nl_a, None, A_ring)
-    print("Two rounds a : ", two_rounds_a)
+    #print("Two rounds a : ", two_rounds_a)
     a_system = [input_a[0], one_round_a[0], one_round_a[1], two_rounds_a[0], a11 - 2]
-    print()
-    print("System in a : ")
-    for eq in a_system:
-        print("Equation : ", eq)
-    print()
+    #print()
+    #print("System in a : ")
+    #for eq in a_system:
+    #    print("Equation : ", eq)
+    #print()
     ideal = A_ring.ideal(a_system)
     ideal_variety = ideal.variety()
     A2, A4, A6, A8, A11 = ideal_variety[-1]['a2'], ideal_variety[-1]['a4'], ideal_variety[-1]['a6'], ideal_variety[-1]['a8'], ideal_variety[-1]['a11']
     ai_s = vector(Fp, [0, 0, A2, 0, A4, 0, A6, 0, A8, 0, 0, A11])
     print("ai_s : ", ai_s)
-    input_a = M_mat_inv * ai_s
+    input_ais.extend(list(M_mat_inv * ai_s))
     init_b = [0, 0, b2, 0, b4, 0, b6, 0, b8, 0, 0, b11]
     init_x = [ai_s[i]*x + init_b[i] for i in range(t)]
     input_x = M_mat_inv * vector(init_x)
     one_nl_x = griffin_nl(init_x)
-    #one_nl_x =  [0, 0, 3473762426692129*x + 7*b2, 0, 24154329837780748*x + 63*b4, 0, 21459929206686329*x + 175*b6, 0, 4253124222277239*x + 343*b8, 0, 0, 1400*x + 700*b11]
-    print("one nl x : ", one_nl_x)
+    #print("one nl x : ", one_nl_x)
     one_round_x = griffin_affine(one_nl_x, 0, X_ring)
-    print("one round x : ", one_round_x)
+    #print("one round x : ", one_round_x)
     two_nl_x, eq_u0 = griffin_nl_with_new_var(one_round_x, u0, system)
-    print("two_nl_x : ", two_nl_x)
+    #print("two_nl_x : ", two_nl_x)
     two_rounds_x = griffin_affine(two_nl_x, 1, X_ring)
-    print("two rounds x : ", two_rounds_x)
+    #print("two rounds x : ", two_rounds_x)
     b_system = [input_x[0][0], two_rounds_x[0][1], two_rounds_x[0][2], b2-1, b4-1, eq_u0]
-    print()
-    print("System in b : ")
-    for eq in b_system:
-        print("Equation : ", eq)
-    print()
+    #print()
+    #print("System in b : ")
+    #for eq in b_system:
+    #    print("Equation : ", eq)
+    #print()
     ideal = B_ring.ideal(b_system)
     ideal_variety = ideal.variety()
-    print("ideal variety : ", ideal_variety)
+    #print("ideal variety : ", ideal_variety)
     B2, B4, B6, B8, B11, U0 = ideal_variety[-1]["b2"],ideal_variety[-1]["b4"],ideal_variety[-1]["b6"],ideal_variety[-1]["b8"],ideal_variety[-1]["b11"],ideal_variety[-1]["u0"]
     bi_s = vector(Fp, [0, 0, B2, 0, B4, 0, B6, 0, B8, 0, 0, B11])
     print("bi_s : ", bi_s)
-    input_b = M_mat_inv * bi_s
-    input_state = [input_a[i]*x0 + input_b[i] for i in range(t)]
+    input_bis.extend(list(M_mat_inv * bi_s))
+    input_state = [input_ais[i]*x0 + input_bis[i] for i in range(t)]
     print("input_state : ", input_state)
     M_input_state = [ai_s[i]*x0 + bi_s[i] for i in range(t)]
     print("M * input_state : ", M_input_state)
     one_nl_state = griffin_nl(M_input_state, False)
-    print("one_nl_state : ", one_nl_state)
+    #print("one_nl_state : ", one_nl_state)
     one_round_state = griffin_affine(one_nl_state, 0, PR_fl)
-    print("One round state : ", one_round_state)
+    #print("One round state : ", one_round_state)
     two_nl_state = griffin_nl(one_round_state, False)
-    print("two_nl_state : ", two_nl_state)
+    #print("two_nl_state : ", two_nl_state)
     two_rounds_state = griffin_affine(two_nl_state, 1, PR_fl)
-    print("two_rounds_state : ", two_rounds_state)
+    #print("two_rounds_state : ", two_rounds_state)
     three_nl_state = griffin_nl(two_rounds_state, False)
-    print("three_nl_state : ", three_nl_state)
+    #print("three_nl_state : ", three_nl_state)
     three_rounds_state = griffin_affine(three_nl_state, 2, PR_fl)
     return input_state, three_rounds_state
 
@@ -259,14 +255,16 @@ def sys_gen(n_rounds, PR_fl):
     """
     system = []
     state, three_rnds_state  = build_initial_state(system)
-    n_rounds -= 3
-    for rnd in range(n_rounds):
+    state = three_rnds_state
+    n_extra_rounds = n_rounds-3
+    for rnd in range(n_extra_rounds):
         u_new = U[rnd]
-        state, p_eq = griffin_round_with_new_var(state, rnd, u_new, system)
+        state, p_eq = griffin_round_with_new_var(state, rnd+3, u_new, system)
         system.append(p_eq)
         print("New equation nbr ", len(system))
     # g = first component of the final state (CICO requires this = 0)
-    system.append(state[0].reduce(system))
+    #print("state[0] = ", state[0])
+    system.append(state[0])
     return system
 
 
@@ -337,7 +335,8 @@ def poly_det(alpha0, DH, Mi_list):
     Compute the determinant using the Bareiss algorithm (fraction-free Gaussian elimination)
     directly on the matrix with polynomial entries.
     """
-
+    Fx = PolynomialRing(Fp, 'x')
+    x = Fx.gen()
     # Construct the Matrix with Polynomial Entries
     # A(x) = x^alpha0 * I + sum(x^i * Mi)
     print("  Constructing polynomial matrix...")
@@ -353,12 +352,12 @@ def poly_det(alpha0, DH, Mi_list):
     coeff = 1
     for i in range(alpha0):
         Mi = Mi_list[i]
-        #A += coeff * Mi
-        for r in range(DH):
-            for c in range(DH):
-                val = Mi[r, c]
-                if val != 0:
-                    A[r, c] += coeff * val
+        A += coeff * Mi
+        #for r in range(DH):
+        #    for c in range(DH):
+        #        val = Mi[r, c]
+        #        if val != 0:
+        #            A[r, c] += coeff * val
         coeff *= x
 
     start_time = time.time()
@@ -388,18 +387,9 @@ def griffin_eval(input_vec, n_rounds):
 
     for rnd in range(n_rounds):
         # Non-linear layer S
-        y0_val = state[0]**((p - 1 + alpha) // alpha % (p - 1))  # x^{1/alpha} in Fp
-        inv_a  = pow(int(alpha), -1, p - 1)
-        y0_val = pow(int(state[0]), inv_a, p)
-        y1_val = pow(int(state[1]), alpha, p)
-
-        nl = [Fp(y0_val), Fp(y1_val)]
-        for i in range(2, t):
-            li_val = Fp((i - 1)) * Fp(y0_val) + Fp(y1_val) + state[i - 1]
-            nl.append(state[i] * (li_val**2 + deltas[i] * li_val + mus[i]))
-
+        nl = griffin_nl(state)
         # Affine layer
-        state = list(M_mat * vector(Fp, nl) + RC[rnd])
+        state = griffin_affine(nl, rnd, Fp)
 
     return state
 
@@ -408,9 +398,8 @@ def verify_cico(x0_val, n_rounds):
     """
     Check that raw_input is a CICO solution.
     """
-    #inp = [Fp(0), Fp(x0_val)] + [Fp(0)] * (t - 2)
-    inp = [Fp(0), Fp(31*x0_val+3), Fp(3*x0_val), Fp(x0_val+1), Fp(7*x0_val+43), Fp(2*x0_val+1), Fp(4*x0_val+2),
-        Fp(6*x0_val+12), Fp(9*x0_val+36), Fp(3*x0_val+3), Fp(4*x0_val+7), Fp(2*x0_val+10)]
+    inp = [Fp(0)] + [input_ais[i]*x0_val + input_bis[i] for i in range(1, t)]
+    print("input in x0_val : ", inp)
     out = griffin_eval(inp, n_rounds)
     return out[0] == Fp(0), out
 
@@ -456,7 +445,7 @@ def freelunch_attack(n_rounds):
     print("\n[3/4] polyDet: computing det(x0^alpha0 * I + sum x0^i * M_i)...")
     f = poly_det(alpha0, DH, Mi_list)
     print(f"  Degree of f(x0) = {f.degree()}")
-    print(f"  f(x0) = {f}")
+    #print(f"  f(x0) = {f}")
 
     # Step 4: uniSol
     print("\n[4/4] uniSol: finding roots of f(x0)...")
@@ -467,11 +456,10 @@ def freelunch_attack(n_rounds):
 
     # Verification
     print("\nVerification:")
+
     for rv in roots:
         ok, out = verify_cico(rv, n_rounds)
-        #inp = [Fp(0)] + [Fp(rv)] + [Fp(0)] * (t - 2)
-        inp = [Fp(0), Fp(31*rv+3), Fp(3*rv), Fp(rv+1), Fp(7*rv+43), Fp(2*rv+1), Fp(4*rv+2),
-            Fp(6*rv+12), Fp(9*rv+36), Fp(3*rv+3), Fp(4*rv+7), Fp(2*rv+10)]
+        inp = [Fp(0)] + [input_ais[i]*rv + input_bis[i] for i in range(1, t)]
         print(f"  x0 = {rv}")
         print(f"  input[0]  = {inp[0]},  output[0] = {out[0]},  CICO OK: {ok}")
         print(f"Input state = {inp}")
